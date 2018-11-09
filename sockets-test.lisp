@@ -32,9 +32,10 @@
 (in-package :tcp-server)
 (defun send-text-to-socket (text socket)
   (let ((socket-stream (usocket:socket-stream socket)))
-    (format
-     socket-stream
-     (format nil "~a~%" text))  ; adding a line break at the end for prettiness
+    (dotimes (i (length text))
+      (write-byte (char-code (aref text i))
+		  socket-stream)) ; adding a line break at the end for prettiness
+    (write-byte 10 socket-stream)
     (force-output socket-stream)))
 
 (defun close-socket (socket)
@@ -50,9 +51,40 @@
   ;; NOTE: read-line blocks until end-of-line character is received
   ;; see http://mihai.bazon.net/blog/howto-multi-threaded-tcp-server-in-common-lisp
   ;; for read-byte-at-a-time solution
-  (let ((message (read-line (usocket:socket-stream client-socket))))
-    (logger "got a message: ~a" message)
-    (send-text-to-socket message client-socket)))
+  (let ((data? (client-read client-socket)))
+    (when data?
+      (logger "finished getting a message: ~a" data?)
+      (send-text-to-socket data? client-socket))))
+
+(defun collect-input (socket buffer &optional (end-char 10 ;0
+							))
+  (let ((stream (usocket:socket-stream socket))
+	byte)
+    (block what
+      (loop
+	 (unless (listen stream)
+	   (return-from what nil))
+	 (setq byte (read-byte stream))
+	 (when (= byte end-char)
+	   (return-from what t))
+	 (vector-push-extend byte buffer)))))
+
+(defvar *socket-socket-object* (make-hash-table))
+(defun what-socket-client-object (client-socket)
+  (gethash client-socket *socket-socket-object*))
+(defun (setf what-socket-client-object) (new client-socket)
+  (setf (gethash client-socket *socket-socket-object*) new))
+(defun remove-what-socket-client-object (client-socket)
+  (remhash client-socket *socket-socket-object*))
+
+(defun reset-buffer (buffer)
+  (setf (fill-pointer buffer) 0))
+(defun client-read (client-socket)
+  (let ((buffer (what-socket-client-object client-socket)))
+    (when (collect-input client-socket buffer)
+      (prog1
+	  (trivial-utf-8:utf-8-bytes-to-string buffer)
+	(reset-buffer buffer)))))
 		       
 (defun run-tcp-server (&optional (host *host*) (port *port*))
   "Run TCP server in a loop, listening to incoming connections.
@@ -60,23 +92,34 @@
   process-client-socket in a separate thread every time there is activity
   on the client socket.
   All client sockets are kept in all-sockets list."
+  (clrhash *socket-socket-object*)
   (usocket:with-socket-listener (master-socket host port :backlog 256)
     (let ((all-sockets `(,master-socket)))
-      (loop
-	 (loop for sock in (usocket:wait-for-input all-sockets :ready-only t)
-	    do (if (eq sock master-socket)
-					; new connection initiated
-		   (let ((client-socket
-			  (usocket:socket-accept master-socket :element-type 'character)))
-		     (push client-socket all-sockets)
-		     (logger "new socket initiated: ~a" client-socket))
-					; client socket activity
-		   (handler-case
-		       (process-client-socket sock)
-		     (t (e)
-		       (logger "error during processing ~a" e)
-		       (setf all-sockets (delete sock all-sockets))
-		       (close-socket sock)))))))))
+      (unwind-protect
+	   (loop
+	      (loop for sock in (usocket:wait-for-input all-sockets :ready-only t)
+		 do (if (eq sock master-socket)
+			;; new connection initiated
+			(let ((client-socket
+			       (usocket:socket-accept master-socket :element-type 'unsigned-byte)))
+			  (push client-socket all-sockets)
+			  (setf (what-socket-client-object client-socket)
+				(make-array 0 :adjustable t
+					    :fill-pointer 0
+					    :element-type 'unsigned-byte))
+			  (logger "new socket initiated: ~a" client-socket))
+			;; client socket activity
+			(handler-case
+			    (process-client-socket sock)
+			  (t (e)
+			    (logger "error during processing ~a" e)
+			    (setf all-sockets (delete sock all-sockets))
+			    (remove-what-socket-client-object sock)
+			    (close-socket sock))))))
+	(clrhash *socket-socket-object*)
+	(dolist (socket all-sockets)
+	  (unless (eq socket master-socket)
+	    (close-socket socket)))))))
 
 (defpackage :udp-server
   (:use :cl :sockets-test))
