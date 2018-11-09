@@ -16,7 +16,7 @@
 ;; UDP server example https://gist.github.com/traut/648dc0d7b22fdfeae6771a5a4a19f877
 
 ;;connect to tcp server:
-;;   $ telnet 127.0.0.1 8881
+;;   $ telnet 0.0.0.0 8882
 ;;connect to udp server:
 ;;   $ nc -u localhost 8882
 
@@ -61,23 +61,23 @@
   process-client-socket in a separate thread every time there is activity
   on the client socket.
   All client sockets are kept in all-sockets list."
-  (let* ((master-socket (usocket:socket-listen host port :backlog 256))
-         (all-sockets `(,master-socket)))
-    (loop
-       (loop for sock in (usocket:wait-for-input all-sockets :ready-only t)
-	  do (if (eq sock master-socket)
+  (usocket:with-socket-listener (master-socket host port :backlog 256)
+    (let ((all-sockets `(,master-socket)))
+      (loop
+	 (loop for sock in (usocket:wait-for-input all-sockets :ready-only t)
+	    do (if (eq sock master-socket)
 					; new connection initiated
-                 (let ((client-socket
-			(usocket:socket-accept master-socket :element-type 'character)))
-                   (push client-socket all-sockets)
-                   (logger "new socket initiated: ~a" client-socket))
+		   (let ((client-socket
+			  (usocket:socket-accept master-socket :element-type 'character)))
+		     (push client-socket all-sockets)
+		     (logger "new socket initiated: ~a" client-socket))
 					; client socket activity
-                 (handler-case
-		     (process-client-socket sock)
-                   (t (e)
-		     (logger "error during processing ~a" e)
-		     (setf all-sockets (delete sock all-sockets))
-		     (close-socket sock))))))))
+		   (handler-case
+		       (process-client-socket sock)
+		     (t (e)
+		       (logger "error during processing ~a" e)
+		       (setf all-sockets (delete sock all-sockets))
+		       (close-socket sock)))))))))
 
 (defpackage :udp-server
   (:use :cl :sockets-test))
@@ -108,11 +108,12 @@
       (declare (ignore recv)) ; it's the same buffer val, so we can ignore it
       (logger "new data from ~a:~a / ~a on socket ~a" remote-host remote-port size client-socket)
       (if (plusp size)
-					; converting buffer to string
+	  ;; converting buffer to string
 	  (let* ((message (flexi-streams:octets-to-string buffer :external-format :utf-8 :end size))
 		 (trimmed-message (trim message)))
 	    (logger "got a message: ~a" trimmed-message)
 	    (send-text-to-socket trimmed-message client-socket remote-host remote-port))
+	  
 	  (logger "no data received on udp socket: ~d" size)))))
 
 (defun run-udp-server (&optional (host *host*) (port *port*))
@@ -120,11 +121,11 @@
   This is single-threaded version. Better approach would be to run
   process-client-socket in a separate thread every time there is activity
   on the client socket"
-  (let ((socket (usocket:socket-connect nil nil
-                                        :protocol :datagram
-                                        :local-host host
-                                        :local-port port
-                                        :element-type '(unsigned-byte 8))))
+  (usocket:with-client-socket (socket nil nil nil
+				      :protocol :datagram
+				      :local-host host
+				      :local-port port
+				      :element-type '(unsigned-byte 8))
     (loop
        (loop for sock in (usocket:wait-for-input `(,socket) :ready-only t)
 	  do (process-client-socket sock)))))
