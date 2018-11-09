@@ -53,7 +53,6 @@
   (let ((message (read-line (usocket:socket-stream client-socket))))
     (logger "got a message: ~a" message)
     (send-text-to-socket message client-socket)))
-
 		       
 (defun run-tcp-server (&optional (host *host*) (port *port*))
   "Run TCP server in a loop, listening to incoming connections.
