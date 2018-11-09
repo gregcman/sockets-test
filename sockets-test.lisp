@@ -1,43 +1,49 @@
 (defpackage #:sockets-test
-  (:use #:cl))
+  (:use #:cl)
+  (:export
+   #:logger))
 (in-package :sockets-test)
 
+#+nil
 (defun test ()
   (usocket:with))
-
-(defpackage :ros.script.tcp-echo-server.3745744282
-  (:use :cl))
-(in-package :ros.script.tcp-echo-server.3745744282)
-
 
 ; This is working version of a simple TCP echo server, inspired by
 ; https://gist.github.com/shortsightedsid/71cf34282dfae0dd2528
 ; https://gist.github.com/shortsightedsid/a760e0d83a9557aaffcc
 ; http://mihai.bazon.net/blog/howto-multi-threaded-tcp-server-in-common-lisp
 ;
-; To execute the example, download this gist,
-; install Roswell (https://github.com/roswell/roswell) and run
-;
-;   $ ros ./tcp-echo-server.ros
-;
+; TCP server example - https://gist.github.com/traut/6bf71d0da54493e6f22eb3d00671f2a
+; UDP server example https://gist.github.com/traut/648dc0d7b22fdfeae6771a5a4a19f877
+
+
+(defun logger (text &rest args)
+  "Simple wrapper around format func to simplify logging"
+  (apply 'format (append (list t (concatenate 'string text "~%")) args)))
+
+(defun run-server (&optional
+		     (type (or 'udp
+			       'tcp))
+		     (host "0.0.0.0")
+		     (port (or 8882
+			       8881)))
+  (case type
+    ((udp) (udp-server::run-udp-server host port))
+    ((tcp) (tcp-server::run-tcp-server host port))))
+
+(defpackage :tcp-server
+  (:use :cl :sockets-test))
+(in-package :tcp-server)
+
 ; To connect to a running server, run
 ;
 ;   $ telnet 127.0.0.1 8881
-;
-; You can find UDP server example here - https://gist.github.com/traut/648dc0d7b22fdfeae6771a5a4a19f877
-
-
 (defun send-text-to-socket (text socket)
   (let ((socket-stream (usocket:socket-stream socket)))
     (format
      socket-stream
      (format nil "~a~%" text))  ; adding a line break at the end for prettiness
     (force-output socket-stream)))
-
-
-(defun logger (text &rest args)
-  "Simple wrapper around format func to simplify logging"
-  (apply 'format (append (list t (concatenate 'string text "~%")) args)))
 
 
 (defun close-socket (socket)
@@ -83,50 +89,14 @@
 		     (setf all-sockets (delete sock all-sockets))
 		     (close-socket sock))))))))
 
+(defpackage :udp-server
+  (:use :cl :sockets-test))
+(in-package :udp-server)
 
-(defun run-server-in-thread (host port)
-  "Run TCP server in a separate thread"
-  (let ((thread-name (format nil "tcp-server")))
-    (logger "starting tcp server in a separate thread '~a'" thread-name)
-    (sb-thread:make-thread
-     (lambda () (run-tcp-server host port))
-     :name thread-name)))
-
-
-(defun main (&rest argv)
-  (declare (ignorable argv))
-  (sb-thread:join-thread 
-   (run-server-in-thread "0.0.0.0" 8881))
-  :default nil)
-
-(defpackage :ros.script.udp-echo-server.3745744282
-  (:use :cl))
-(in-package :ros.script.udp-echo-server.3745744282)
-
-
-; This is working version of a simple UDP echo server, inspired by
-; https://gist.github.com/shortsightedsid/71cf34282dfae0dd2528
-; https://gist.github.com/shortsightedsid/a760e0d83a9557aaffcc
-; http://mihai.bazon.net/blog/howto-multi-threaded-tcp-server-in-common-lisp
-;
-; To execute the example, download this gist,
-; install Roswell (https://github.com/roswell/roswell) and run
-;
-;   $ ros ./udp-echo-server.ros
-;
 ; To connect to a running server, run
 ;
 ;   $ nc -u localhost 8882
-;
-;
-; You can find TCP server example here - https://gist.github.com/traut/6bf71d0da54493e6f22eb3d00671f2a9
-
 (defvar +max-buffer-size+ 32768)
-
-
-(defun logger (text &rest args)
-  "Simple wrapper around format func to simplify logging"
-  (apply 'format (append (list t (concatenate 'string text "~%")) args)))
 
 
 (defun send-text-to-socket (text socket remote-host remote-port)
@@ -175,19 +145,3 @@
     (loop
        (loop for sock in (usocket:wait-for-input `(,socket) :ready-only t)
 	  do (process-client-socket sock)))))
-
-
-(defun run-server-in-thread (host port)
-  "Run UDP server in a separate thread"
-  (let ((thread-name (format nil "udp-server")))
-    (logger "starting udp server in a separate thread '~a'" thread-name)
-    (sb-thread:make-thread
-     (lambda () (run-udp-server host port))
-     :name thread-name)))
-
-
-(defun main (&rest argv)
-  (declare (ignorable argv))
-  (sb-thread:join-thread 
-   (run-server-in-thread "0.0.0.0" 8882))
-  :default nil)
