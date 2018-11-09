@@ -1,50 +1,41 @@
 (defpackage #:sockets-test
   (:use #:cl)
   (:export
-   #:logger))
+   #:logger)
+  (:export
+   #:*host*
+   #:*port*))
 (in-package :sockets-test)
 
-#+nil
-(defun test ()
-  (usocket:with))
+;; This is working version of a simple TCP echo server, inspired by
+;; https://gist.github.com/shortsightedsid/71cf34282dfae0dd2528
+;; https://gist.github.com/shortsightedsid/a760e0d83a9557aaffcc
+;; http://mihai.bazon.net/blog/howto-multi-threaded-tcp-server-in-common-lisp
+;;
+;; TCP server example - https://gist.github.com/traut/6bf71d0da54493e6f22eb3d00671f2a
+;; UDP server example https://gist.github.com/traut/648dc0d7b22fdfeae6771a5a4a19f877
 
-; This is working version of a simple TCP echo server, inspired by
-; https://gist.github.com/shortsightedsid/71cf34282dfae0dd2528
-; https://gist.github.com/shortsightedsid/a760e0d83a9557aaffcc
-; http://mihai.bazon.net/blog/howto-multi-threaded-tcp-server-in-common-lisp
-;
-; TCP server example - https://gist.github.com/traut/6bf71d0da54493e6f22eb3d00671f2a
-; UDP server example https://gist.github.com/traut/648dc0d7b22fdfeae6771a5a4a19f877
+;;connect to tcp server:
+;;   $ telnet 127.0.0.1 8881
+;;connect to udp server:
+;;   $ nc -u localhost 8882
 
+(defparameter *host* "0.0.0.0")
+(defparameter *port* 8882)
 
 (defun logger (text &rest args)
   "Simple wrapper around format func to simplify logging"
   (apply 'format (append (list t (concatenate 'string text "~%")) args)))
 
-(defun run-server (&optional
-		     (type (or 'udp
-			       'tcp))
-		     (host "0.0.0.0")
-		     (port (or 8882
-			       8881)))
-  (case type
-    ((udp) (udp-server::run-udp-server host port))
-    ((tcp) (tcp-server::run-tcp-server host port))))
-
 (defpackage :tcp-server
   (:use :cl :sockets-test))
 (in-package :tcp-server)
-
-; To connect to a running server, run
-;
-;   $ telnet 127.0.0.1 8881
 (defun send-text-to-socket (text socket)
   (let ((socket-stream (usocket:socket-stream socket)))
     (format
      socket-stream
      (format nil "~a~%" text))  ; adding a line break at the end for prettiness
     (force-output socket-stream)))
-
 
 (defun close-socket (socket)
   "Close a socket without raising an error if something goes wrong"
@@ -53,7 +44,6 @@
     (error (e)
       (logger "ignoring the error that happened while trying to close socket: ~a" e)))
   (logger "socket closed"))
-
 
 (defun process-client-socket (client-socket)
   "Process client socket that got some activity"
@@ -64,8 +54,8 @@
     (logger "got a message: ~a" message)
     (send-text-to-socket message client-socket)))
 
-
-(defun run-tcp-server (host port)
+		       
+(defun run-tcp-server (&optional (host *host*) (port *port*))
   "Run TCP server in a loop, listening to incoming connections.
   This is single-threaded version. Better approach would be to run
   process-client-socket in a separate thread every time there is activity
@@ -93,11 +83,7 @@
   (:use :cl :sockets-test))
 (in-package :udp-server)
 
-; To connect to a running server, run
-;
-;   $ nc -u localhost 8882
 (defvar +max-buffer-size+ 32768)
-
 
 (defun send-text-to-socket (text socket remote-host remote-port)
   (let* ((message (format nil "~a~%" text))  ; adding a line break at the end for prettiness
@@ -109,10 +95,8 @@
      :host remote-host
      :port remote-port)))
 
-
 (defun trim (str)
   (string-trim '(#\return #\space #\linefeed) str))
-
 
 (defun process-client-socket (client-socket)
   "Process client socket that got some activity"
@@ -131,8 +115,7 @@
 	    (send-text-to-socket trimmed-message client-socket remote-host remote-port))
 	  (logger "no data received on udp socket: ~d" size)))))
 
-
-(defun run-udp-server (host port)
+(defun run-udp-server (&optional (host *host*) (port *port*))
   "Run UDP server in a loop, listening to incoming connections.
   This is single-threaded version. Better approach would be to run
   process-client-socket in a separate thread every time there is activity
