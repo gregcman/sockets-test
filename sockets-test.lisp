@@ -27,6 +27,32 @@
   "Simple wrapper around format func to simplify logging"
   (apply 'format (append (list t (concatenate 'string text "~%")) args)))
 
+(defvar *a-lparallel-kernel* (lparallel:make-kernel 2))
+(defmacro with-lparallel-kernel (&body body)
+  `(let ((lparallel:*kernel* *a-lparallel-kernel*))
+     ,@body))
+(defparameter *channel* (with-lparallel-kernel (lparallel:make-channel)))
+
+(defun tcp ()
+  (let ((lparallel:*task-category* 'tcp))
+    (lparallel:submit-task
+     *channel*
+     (lambda ()
+       (tcp-server::run-tcp-server)))))
+(defun kill-tcp ()
+  (with-lparallel-kernel
+    (lparallel:kill-tasks 'tcp)))
+
+(defun udp ()
+  (let ((lparallel:*task-category* 'udp))
+    (lparallel:submit-task
+     *channel*
+     (lambda ()
+       (udp-server::run-udp-server)))))
+(defun kill-udp ()
+  (with-lparallel-kernel
+    (lparallel:kill-tasks 'udp)))
+
 (defpackage :tcp-server
   (:use :cl :sockets-test))
 (in-package :tcp-server)
