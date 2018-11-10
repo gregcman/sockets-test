@@ -4,7 +4,10 @@
    #:logger)
   (:export
    #:*host*
-   #:*port*))
+   #:*port*)
+  (:export
+   #:collect-input
+   #:make-resizable-unsigned-byte-array))
 (in-package :sockets-test)
 
 ;; This is working version of a simple TCP echo server, inspired by
@@ -26,6 +29,35 @@
 (defun logger (text &rest args)
   "Simple wrapper around format func to simplify logging"
   (apply 'format (append (list t (concatenate 'string text "~%")) args)))
+
+(defun make-resizable-unsigned-byte-array (&optional (size 0))
+  (make-array size :adjustable t
+	      :fill-pointer size
+	      :element-type '(unsigned-byte 8)))
+
+(defun spin-loop-collect-input (socket &optional (buffer (make-resizable-unsigned-byte-array))
+					 (end-char 10))
+  (block out
+    (loop
+       (when
+	   (collect-input socket buffer end-char)
+	 (return-from out nil))))
+  buffer)
+
+(defun collect-input (socket &optional (buffer (make-resizable-unsigned-byte-array)
+					       )
+			       (end-char 10 ;0
+					 ))
+  (let ((stream (usocket:socket-stream socket))
+	byte)
+    (block what
+      (loop
+	 (unless (listen stream)
+	   (return-from what nil))
+	 (setq byte (read-byte stream))
+	 (when (= byte end-char)
+	   (return-from what buffer))
+	 (vector-push-extend byte buffer)))))
 
 (defvar *a-lparallel-kernel* (lparallel:make-kernel 2))
 (defmacro with-lparallel-kernel (&body body)
@@ -52,6 +84,29 @@
 (defun kill-udp ()
   (with-lparallel-kernel
     (lparallel:kill-tasks 'udp)))
+
+(defun tcp-client (&optional (host *host*) (port *port*))
+  (usocket:with-client-socket
+      (socket nil host port :element-type 'unsigned-byte)
+    (tcp-server::send-text-to-socket "heyo heyo" socket)
+    (progn
+      (usocket:wait-for-input socket)
+      (format t "~A~%" (trivial-utf-8:utf-8-bytes-to-string (spin-loop-collect-input socket)))
+      )))
+
+(defun udp-client (&optional (host *host*) (port *port*))
+  (usocket:with-client-socket (socket nil host port
+				      :protocol :datagram
+				      :element-type '(unsigned-byte 8))
+    (let ((buffer (make-resizable-unsigned-byte-array 8)))
+      (progn
+	(format t "Sending data~%")
+	(replace buffer #(1 2 3 4 5 6 7 8))
+	(usocket:socket-send socket buffer 8)
+	(format t "Receiving data~%")
+	(usocket:socket-receive socket buffer 8)
+	(format t "~A~%" buffer)))))
+
 
 (defpackage :tcp-server
   (:use :cl :sockets-test))
@@ -81,19 +136,6 @@
     (when data?
       (logger "finished getting a message: ~a" data?)
       (send-text-to-socket data? client-socket))))
-
-(defun collect-input (socket buffer &optional (end-char 10 ;0
-							))
-  (let ((stream (usocket:socket-stream socket))
-	byte)
-    (block what
-      (loop
-	 (unless (listen stream)
-	   (return-from what nil))
-	 (setq byte (read-byte stream))
-	 (when (= byte end-char)
-	   (return-from what t))
-	 (vector-push-extend byte buffer)))))
 
 (defvar *socket-socket-object* (make-hash-table))
 (defun what-socket-client-object (client-socket)
@@ -130,9 +172,7 @@
 			       (usocket:socket-accept master-socket :element-type 'unsigned-byte)))
 			  (push client-socket all-sockets)
 			  (setf (what-socket-client-object client-socket)
-				(make-array 0 :adjustable t
-					    :fill-pointer 0
-					    :element-type 'unsigned-byte))
+				(make-resizable-unsigned-byte-array))
 			  (logger "new socket initiated: ~a" client-socket))
 			;; client socket activity
 			(handler-case
